@@ -1,0 +1,55 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Nie zwei Deploys gleichzeitig — sie würden sich beim Umschalten in die Quere
+# kommen.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  SITE: carlatrapp.de
+
+jobs:
+  deploy:
+    name: Upload
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Kommt hier später ein Build dazu (z. B. eine Portfolio-App), gehört er
+      # vor diesen Schritt — und hochgeladen wird dann dessen Ausgabe statt
+      # `public/`. Vorlage: Repo `carlatrapp-spotoff`.
+
+      - name: SSH-Zugang einrichten
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          ssh-keyscan -H "${{ secrets.HETZNER_HOST }}" >> ~/.ssh/known_hosts
+
+      # Erst in einen Zwischenordner, dann umschalten: Bricht der Upload ab,
+      # bleibt die laufende Seite unberührt. Caddy liefert /opt/apps/sites aus
+      # (siehe Repo `proxy`).
+      - name: Hochladen und umschalten
+        run: |
+          SSH="ssh -i ~/.ssh/deploy ${{ secrets.HETZNER_USER }}@${{ secrets.HETZNER_HOST }}"
+          $SSH "mkdir -p /opt/apps/sites"
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy" public/ \
+            "${{ secrets.HETZNER_USER }}@${{ secrets.HETZNER_HOST }}:/opt/apps/sites/$SITE.next/"
+          $SSH "set -e
+            cd /opt/apps/sites
+            rm -rf $SITE.old
+            if [ -d $SITE ]; then mv $SITE $SITE.old; fi
+            mv $SITE.next $SITE
+            rm -rf $SITE.old
+            ls -la $SITE | head -5"
